@@ -34,6 +34,15 @@ class HummingLinearKernel(MPLinearKernel):
             return False, "Humming is not installed"
         if c.act_type.itemsize == 1 and c.act_type not in _ACT_QUANT_KEYS:
             return False, f"Activation type ({c.act_type}) not supported by Humming"
+        # Humming flushes group scales at every 128-row K-tile end, so a group
+        # must divide 128, be a multiple of it, or span all of K.
+        group_size = c.group_size
+        if not (
+            group_size in (-1, 16, 32, 64)
+            or group_size % 128 == 0
+            or group_size == c.partition_weight_shape[0]
+        ):
+            return False, f"Group size ({group_size}) not supported by Humming"
         return True, None
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:

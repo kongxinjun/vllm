@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-"""Tests for W4A16 kernel selection logic (ROCm).
+"""Tests for W4A16 kernel selection logic.
 
 Run `pytest tests/kernels/quantization/test_w4a16_kernel_selection.py`.
 """
@@ -68,3 +68,39 @@ def test_choose_mp_linear_kernel_uint4_asymmetric():
 
     kernel_type = choose_mp_linear_kernel(config)
     assert kernel_type.__name__ == _expected_rocm_kernel(scalar_types.uint4, 64)
+
+
+@pytest.mark.parametrize(
+    "K,group_size,supported",
+    [
+        (3840, -1, True),
+        (3840, 32, True),
+        (3840, 64, True),
+        (3840, 128, True),
+        (3840, 384, True),
+        (480, 480, True),
+        (3840, 48, False),
+        (3840, 96, False),
+        (3840, 160, False),
+    ],
+)
+def test_humming_rejects_group_sizes_that_straddle_k_tiles(
+    monkeypatch, K, group_size, supported
+):
+    """Humming gives wrong output for groups that neither divide nor are a
+    multiple of its 128-row K tile, so selection must fall through."""
+    from vllm.model_executor.kernels.linear.mixed_precision import humming
+
+    monkeypatch.setattr(humming, "has_humming", lambda: True)
+    monkeypatch.setattr(humming.current_platform, "is_cuda", lambda: True)
+    config = MPLinearLayerConfig(
+        full_weight_shape=(K, 256),
+        partition_weight_shape=(K, 256),
+        weight_type=scalar_types.uint4b8,
+        act_type=torch.bfloat16,
+        group_size=group_size,
+        zero_points=False,
+    )
+
+    can_implement, _ = humming.HummingLinearKernel.can_implement(config)
+    assert can_implement == supported
